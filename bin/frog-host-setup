@@ -57,19 +57,14 @@ contains() {
   return 1
 }
 
-append_unique() {
-  local value=$1
-  shift
-  local -n target=$1
-  contains "$value" "${target[@]:-}" || target+=("$value")
-}
-
 while (($#)); do
   case "$1" in
     --component)
       (($# >= 2)) || die "--component requires a value"
       case "$2" in
-        openssh|mosh|tmux) append_unique "$2" requested ;;
+        openssh|mosh|tmux)
+          contains "$2" "${requested[@]:-}" || requested+=("$2")
+          ;;
         *) die "unsupported component '$2'; expected openssh, mosh, or tmux" ;;
       esac
       shift 2
@@ -143,7 +138,7 @@ if ((${#missing[@]} > 0)); then
   for component in "${missing[@]}"; do
     read -r -a component_packages <<<"$(packages_for "$manager" "$component")"
     for package in "${component_packages[@]}"; do
-      append_unique "$package" install_packages
+      contains "$package" "${install_packages[@]:-}" || install_packages+=("$package")
     done
   done
 fi
@@ -165,10 +160,9 @@ if ((${#install_packages[@]} > 0)); then
 fi
 
 print_json_array() {
-  local -n values=$1
   local first=true value
   printf '['
-  for value in "${values[@]}"; do
+  for value in "$@"; do
     $first || printf ','
     first=false
     printf '"%s"' "$(json_escape "$value")"
@@ -181,11 +175,11 @@ emit_result() {
   if $json; then
     printf '{"schema_version":1,"state":"%s","package_manager":"%s","requested":' \
       "$(json_escape "$state")" "$(json_escape "$manager")"
-    print_json_array requested
+    print_json_array "${requested[@]}"
     printf ',"missing":'
-    print_json_array missing
+    print_json_array "${missing[@]}"
     printf ',"packages":'
-    print_json_array install_packages
+    print_json_array "${install_packages[@]}"
     printf ',"requires_sudo":%s}\n' "$needs_sudo"
   else
     printf 'Host setup: %s\n' "$state"
