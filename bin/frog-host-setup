@@ -177,9 +177,17 @@ emit_result() {
       "$(json_escape "$state")" "$(json_escape "$manager")"
     print_json_array "${requested[@]}"
     printf ',"missing":'
-    print_json_array "${missing[@]}"
+    if ((${#missing[@]} > 0)); then
+      print_json_array "${missing[@]}"
+    else
+      print_json_array
+    fi
     printf ',"packages":'
-    print_json_array "${install_packages[@]}"
+    if ((${#install_packages[@]} > 0)); then
+      print_json_array "${install_packages[@]}"
+    else
+      print_json_array
+    fi
     printf ',"requires_sudo":%s}\n' "$needs_sudo"
   else
     printf 'Host setup: %s\n' "$state"
