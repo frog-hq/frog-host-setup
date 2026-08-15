@@ -12,9 +12,12 @@ by the user.
 
 - Detect → plan → explicit consent → apply → verify.
 - Only `openssh`, `mosh`, and `tmux` are accepted component names.
-- `--dry-run` prints the exact package-manager plan without mutation.
+- `--dry-run --json` prints the exact package-manager command as an argument
+  array without mutation.
 - `sudo` is never used before the plan is displayed and consent is provided.
 - Re-running the tool is safe: ready components are not installed again.
+- tmux is verified with an isolated socket, no user configuration, a bounded
+  test session, and deterministic cleanup.
 - The tool never edits `sshd_config`, `authorized_keys`, `.tmux.conf`, or shell
   profiles.
 - Release assets are accompanied by SHA-256 checksums, an SPDX SBOM, and a

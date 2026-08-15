@@ -34,11 +34,22 @@ assert_status() {
   fi
 }
 
+assert_not_contains() {
+  local haystack=$1 needle=$2
+  if [[ "$haystack" != *"$needle"* ]]; then
+    pass=$((pass + 1))
+  else
+    printf 'FAIL: expected output not to contain %q\n%s\n' "$needle" "$haystack" >&2
+    fail=$((fail + 1))
+  fi
+}
+
 make_fake_path() {
   local dir=$1
   mkdir -p "$dir"
   ln -s "$REAL_UNAME" "$dir/uname"
   ln -s "$REAL_ID" "$dir/id"
+  ln -s "$REAL_BASH" "$dir/bash"
 }
 
 tmp=$(mktemp -d)
@@ -49,8 +60,19 @@ set +e
 output=$(PATH="$tmp/empty" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --component tmux --verify-only 2>&1)
 status=$?
 set -e
-assert_status "$status" 3
-assert_contains "$output" "no supported package manager"
+assert_status "$status" 4
+assert_contains "$output" "Host setup: missing"
+assert_contains "$output" "Plan: unavailable"
+
+set +e
+output=$(PATH="$tmp/empty" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --component tmux --verify-only --json 2>&1)
+status=$?
+set -e
+assert_status "$status" 4
+assert_contains "$output" '"state":"missing"'
+assert_contains "$output" '"package_manager":"none"'
+assert_contains "$output" '"command":[]'
+assert_contains "$output" '"requires_sudo":false'
 
 make_fake_path "$tmp/apt"
 cat >"$tmp/apt/apt-get" <<'EOF'
@@ -61,6 +83,7 @@ chmod +x "$tmp/apt/apt-get"
 output=$(PATH="$tmp/apt" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --component tmux --dry-run --json)
 assert_contains "$output" '"state":"planned"'
 assert_contains "$output" '"packages":["tmux"]'
+assert_contains "$output" '"command":["sudo","apt-get","install","-y","--no-install-recommends","tmux"]'
 [[ ! -e "$tmp/install.log" ]] && pass=$((pass + 1)) || fail=$((fail + 1))
 
 set +e
@@ -80,12 +103,31 @@ EOF
 done
 cat >"$tmp/ready/tmux" <<'EOF'
 #!/usr/bin/env bash
+printf 'tmux:%s\n' "$*" >>"${FROG_TEST_LOG:?}"
 exit 0
 EOF
 chmod +x "$tmp/ready/tmux"
-output=$(PATH="$tmp/ready" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --verify-only --json)
+output=$(PATH="$tmp/ready" FROG_TEST_LOG="$tmp/tmux.log" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --verify-only --json)
 assert_contains "$output" '"state":"ready"'
 assert_contains "$output" '"missing":[]'
+assert_contains "$(<"$tmp/tmux.log")" "-f /dev/null new-session -d -s frog-host-setup-verify sleep 30"
+assert_contains "$(<"$tmp/tmux.log")" "has-session -t frog-host-setup-verify"
+assert_contains "$(<"$tmp/tmux.log")" "kill-server"
+assert_not_contains "$(<"$tmp/tmux.log")" ".tmux.conf"
+
+make_fake_path "$tmp/broken-tmux"
+cat >"$tmp/broken-tmux/tmux" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *"has-session"* ]] && exit 1
+exit 0
+EOF
+chmod +x "$tmp/broken-tmux/tmux"
+set +e
+output=$(PATH="$tmp/broken-tmux" FROG_HOST_SETUP_OS=linux "$REAL_BASH" "$TOOL" --component tmux --verify-only --json)
+status=$?
+set -e
+assert_status "$status" 4
+assert_contains "$output" '"state":"missing"'
 
 set +e
 output=$(PATH="$tmp/ready" "$REAL_BASH" "$TOOL" --component nope 2>&1)

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly PROGRAM="frog-host-setup"
-readonly VERSION="0.1.0-alpha.1"
+readonly VERSION="0.1.0-alpha.2"
 
 dry_run=false
 assume_yes=false
@@ -87,11 +87,28 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+verify_tmux_runtime() {
+  local socket_name="frog-host-setup-$$-$RANDOM"
+  local session_name="frog-host-setup-verify"
+  local status=0
+
+  # Never read or mutate the user's tmux configuration or default server. The
+  # bounded sleep keeps the test session alive long enough for has-session to
+  # prove that the server is usable; kill-server is attempted on every path.
+  tmux -L "$socket_name" -f /dev/null new-session -d -s "$session_name" "sleep 30" \
+    >/dev/null 2>&1 || status=$?
+  if ((status == 0)); then
+    tmux -L "$socket_name" has-session -t "$session_name" >/dev/null 2>&1 || status=$?
+  fi
+  tmux -L "$socket_name" kill-server >/dev/null 2>&1 || true
+  return "$status"
+}
+
 component_ready() {
   case "$1" in
     openssh) command_exists ssh && command_exists sshd ;;
     mosh) command_exists mosh && command_exists mosh-server ;;
-    tmux) command_exists tmux ;;
+    tmux) command_exists tmux && verify_tmux_runtime ;;
   esac
 }
 
@@ -133,8 +150,7 @@ for component in "${requested[@]}"; do
 done
 
 manager=$(detect_package_manager)
-if ((${#missing[@]} > 0)); then
-  [[ "$manager" != none ]] || die "missing ${missing[*]} and no supported package manager was found" 3
+if ((${#missing[@]} > 0)) && [[ "$manager" != none ]]; then
   for component in "${missing[@]}"; do
     read -r -a component_packages <<<"$(packages_for "$manager" "$component")"
     for package in "${component_packages[@]}"; do
@@ -144,7 +160,7 @@ if ((${#missing[@]} > 0)); then
 fi
 
 needs_sudo=false
-if [[ "$manager" != brew && ${EUID:-$(id -u)} -ne 0 ]]; then
+if ((${#install_packages[@]} > 0)) && [[ "$manager" != brew && ${EUID:-$(id -u)} -ne 0 ]]; then
   needs_sudo=true
 fi
 
@@ -188,6 +204,12 @@ emit_result() {
     else
       print_json_array
     fi
+    printf ',"command":'
+    if ((${#install_command[@]} > 0)); then
+      print_json_array "${install_command[@]}"
+    else
+      print_json_array
+    fi
     printf ',"requires_sudo":%s}\n' "$needs_sudo"
   else
     printf 'Host setup: %s\n' "$state"
@@ -195,9 +217,13 @@ emit_result() {
     printf 'Requested: %s\n' "${requested[*]}"
     if ((${#missing[@]} > 0)); then
       printf 'Missing: %s\n' "${missing[*]}"
-      printf 'Plan:'
-      printf ' %q' "${install_command[@]}"
-      printf '\n'
+      if ((${#install_command[@]} > 0)); then
+        printf 'Plan:'
+        printf ' %q' "${install_command[@]}"
+        printf '\n'
+      else
+        printf 'Plan: unavailable (no supported package manager)\n'
+      fi
     fi
   fi
 }
@@ -210,6 +236,11 @@ fi
 if $verify_only; then
   emit_result missing
   exit 4
+fi
+
+if [[ "$manager" == none ]]; then
+  emit_result unavailable
+  exit 3
 fi
 
 if $dry_run; then
@@ -234,12 +265,6 @@ done
 if ((${#missing[@]} > 0)); then
   emit_result verification-failed
   exit 6
-fi
-
-if contains tmux "${requested[@]}"; then
-  socket_name="frog-host-setup-$$"
-  tmux -L "$socket_name" -f /dev/null new-session -d true
-  tmux -L "$socket_name" kill-server
 fi
 
 emit_result installed
