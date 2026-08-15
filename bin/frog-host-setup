@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly PROGRAM="frog-host-setup"
-readonly VERSION="0.1.0-alpha.2"
+readonly VERSION="0.1.0-alpha.3"
 
 dry_run=false
 assume_yes=false

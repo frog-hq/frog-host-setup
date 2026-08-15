@@ -14,6 +14,11 @@ readonly REAL_ID
 pass=0
 fail=0
 
+version_output=$("$REAL_BASH" "$TOOL" --version)
+[[ "$version_output" == "frog-host-setup 0.1.0-alpha.3" ]] \
+  && pass=$((pass + 1)) \
+  || { printf 'FAIL: unexpected version: %s\n' "$version_output" >&2; fail=$((fail + 1)); }
+
 assert_contains() {
   local haystack=$1 needle=$2
   if [[ "$haystack" == *"$needle"* ]]; then
